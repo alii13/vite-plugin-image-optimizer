@@ -23,8 +23,6 @@ node_modules
 .pnpm-store/
 
 # compiled output
-/dist
-/build
 /tar
 *.tgz
 
