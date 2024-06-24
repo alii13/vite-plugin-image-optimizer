@@ -82,7 +82,16 @@ function ViteImageOptimizer(optionsParam: Options = {}): Plugin {
   let publicDir: string;
   let rootConfig: ResolvedConfig;
 
-  const sizesMap = new Map<string, { size: number; oldSize: number; ratio: number; skipWrite: boolean; isCached: boolean }>();
+  const sizesMap = new Map<
+    string,
+    {
+      size: number;
+      oldSize: number;
+      ratio: number;
+      skipWrite: boolean;
+      isCached: boolean;
+    }
+  >();
   const mtimeCache = new Map<string, number>();
   const errorsMap = new Map<string, string>();
 
@@ -126,7 +135,9 @@ function ViteImageOptimizer(optionsParam: Options = {}): Plugin {
       // store buffer in cache
       if (options.cache === true && !isCached) {
         if (!fs.existsSync(dirname(cachedFilePath))) {
-          await fsp.mkdir(dirname(cachedFilePath), { recursive: true });
+          await fsp.mkdir(dirname(cachedFilePath), {
+            recursive: true,
+          });
         }
         await fsp.writeFile(cachedFilePath, newBuffer);
       }
@@ -193,51 +204,54 @@ function ViteImageOptimizer(optionsParam: Options = {}): Plugin {
     },
     generateBundle: async (_, bundler) => {
       const allFiles: string[] = Object.keys(bundler);
-      const files: string[] = getFilesToProcess(allFiles, path => (bundler[path] as any).name);
+      const includedFiles: string[] = getFilesToProcess(allFiles, path => (bundler[path] as any).name);
 
-      if (files.length > 0) {
-        await ensureCacheDirectoryExists();
+      if (includedFiles.length > 0) await ensureCacheDirectoryExists();
 
-        const handles = files.map(async (filePath: string) => {
-          const source = (bundler[filePath] as any).source;
+      const handles = allFiles.map(async (filePath: string) => {
+        const source = (bundler[filePath] as any).source;
+        if (includedFiles.includes(filePath)) {
           const { content, skipWrite } = await processFile(filePath, source);
           // write the file only if its optimized size < original size
           if (content?.length > 0 && !skipWrite) {
             (bundler[filePath] as any).source = content;
           }
-        });
-        await Promise.all(handles);
-      }
+        }
+      });
+      await Promise.all(handles);
     },
     async closeBundle() {
       if (publicDir && options.includePublic) {
         // find static images in the original static folder
         const allFiles: string[] = readAllFiles(publicDir);
-        const files: string[] = getFilesToProcess(allFiles, path => filename(path) + extname(path));
+        const includedFiles: string[] = getFilesToProcess(allFiles, path => filename(path) + extname(path));
 
-        if (files.length > 0) {
-          await ensureCacheDirectoryExists();
+        if (allFiles.length > 0) await ensureCacheDirectoryExists();
 
-          const handles = files.map(async (publicFilePath: string) => {
-            // convert the path to the output folder
-            const filePath: string = publicFilePath.replace(publicDir + sep, '');
-            const fullFilePath: string = join(rootConfig.root, outputPath, filePath);
+        const handles = allFiles.map(async (publicFilePath: string) => {
+          // convert the path to the output folder
+          const filePath: string = publicFilePath.replace(publicDir + sep, '');
+          const fullFilePath: string = join(rootConfig.root, outputPath, filePath);
 
-            if (fs.existsSync(fullFilePath) === false) return;
+          if (fs.existsSync(fullFilePath) === false) return;
 
-            const { mtimeMs } = await fsp.stat(fullFilePath);
-            if (mtimeMs <= (mtimeCache.get(filePath) || 0)) return;
+          const { mtimeMs } = await fsp.stat(fullFilePath);
+          if (mtimeMs <= (mtimeCache.get(filePath) || 0)) return;
 
-            const buffer: Buffer = await fsp.readFile(fullFilePath);
+          const buffer: Buffer = await fsp.readFile(fullFilePath);
+
+          if (includedFiles.includes(publicFilePath)) {
             const { content, skipWrite } = await processFile(filePath, buffer);
             // write the file only if its optimized size < original size
             if (content?.length > 0 && !skipWrite) {
               await fsp.writeFile(fullFilePath, content);
               mtimeCache.set(filePath, Date.now());
             }
-          });
-          await Promise.all(handles);
-        }
+          } else {
+            await fsp.writeFile(fullFilePath, buffer);
+          }
+        });
+        await Promise.all(handles);
       }
       if (sizesMap.size > 0 && options.logStats) {
         logOptimizationStats(rootConfig, sizesMap, options.ansiColors);
